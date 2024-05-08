@@ -230,6 +230,7 @@ namespace PetriEngine {
         std::fill(_pflags.begin(), _pflags.end(), 0);
         _fireable.resize(_net->_ntransitions);
         std::fill(_fireable.begin(), _fireable.end(), false);
+        _dead_deps.resize(_net->_ntransitions);
 
         std::queue<uint32_t> queue;
 
@@ -239,8 +240,9 @@ namespace PetriEngine {
             if ((_pflags[p] & CAN_INC) == 0) {
                 _pflags[p] |= CAN_INC;
                 for (auto [t, last] = consumers(p); t < last; ++t) {
-                    if (!_fireable[t->index])
-                        queue.push(t->index);
+                    if (!_fireable[t->index] && _dead_deps[t->index] > 0)
+                        if (--_dead_deps[t->index] == 0)
+                            queue.push(t->index);
                 }
             }
         };
@@ -249,8 +251,9 @@ namespace PetriEngine {
             if ((_pflags[p] & CAN_DEC) == 0) {
                 _pflags[p] |= CAN_DEC;
                 for (uint32_t t : _inhibpost[p]) {
-                    if (!_fireable[t])
-                        queue.push(t);
+                    if (!_fireable[t] && _dead_deps[t] > 0)
+                        if (--_dead_deps[t] == 0)
+                            queue.push(t);
                 }
             }
         };
@@ -269,48 +272,38 @@ namespace PetriEngine {
         };
 
         // Process initially enabled transitions
-        for (uint32_t p = 0; p < _net->_nplaces; ++p) {
-            // orphans are currently under "place 0" as a special case
-            if (p == 0 || (*marking)[p] > 0) {
-                uint32_t t = _net->_placeToPtrs[p];
-                uint32_t last = _net->_placeToPtrs[p+1];
-                for (; t < last; ++t) {
-                    bool enabled = true;
-                    for (auto [finv, fout] = _net->preset(t) ; finv < fout; ++finv) {
-                        const Invariant& arc = *finv;
-                        if (arc.inhibitor != (arc.tokens > (*marking)[arc.place])) {
-                            enabled = false;
-                            break;
-                        }
-                    }
-                    if (enabled) {
-                        processEnabled(t);
-                    }
+        for (int t = 0; t < _net->_ntransitions; ++t) {
+            uint16_t dead_deps = 0;
+            for (auto [finv, fout] = _net->preset(t); finv < fout; ++finv) {
+                const Invariant& arc = *finv;
+                if (arc.inhibitor != (arc.tokens > (*marking)[arc.place])) {
+                    dead_deps++;
                 }
+            }
+            _dead_deps[t] = dead_deps;
+            if (dead_deps == 0) {
+                processEnabled(t);
             }
         }
 
         // Compute fixed point of effectively dead places and transitions
-
         while (!queue.empty()) {
             uint32_t t = queue.front();
             queue.pop();
             if (_fireable[t]) continue;
 
-            // Is t enabled?
-            bool enabled = true;
-            uint32_t finv = _net->_transitions[t].inputs;
-            uint32_t linv = _net->_transitions[t].outputs;
-            for (; finv < linv; ++finv) {
-                const Invariant& arc = _net->_invariants[finv];
+            // Can t become enabled?
+            uint16_t dead_deps = 0;
+            for (auto [finv, linv] = _net->preset(t); finv < linv; ++finv) {
+                const Invariant& arc = *finv;
                 bool notInhibited = !arc.inhibitor || arc.tokens > (*marking)[arc.place] || (_pflags[arc.place] & CAN_DEC) > 0;
                 bool enoughTokens = arc.inhibitor || arc.tokens <= (*marking)[arc.place] || (_pflags[arc.place] & CAN_INC) > 0;
                 if (!notInhibited || !enoughTokens) {
-                    enabled = false;
-                    break;
+                    dead_deps++;
                 }
             }
-            if (enabled) {
+            _dead_deps[t] = dead_deps;
+            if (dead_deps == 0) {
                 processEnabled(t);
             }
         }

@@ -95,6 +95,7 @@ namespace PetriEngine {
         std::unordered_map<const Condition *, const std::vector<bool>> _cache;
         std::vector<uint8_t> _pflags;
         std::vector<bool> _fireable;
+        std::vector<uint16_t> _dead_deps;
 
         // === Statistics
         size_t _tokensExtrapolated = 0;
