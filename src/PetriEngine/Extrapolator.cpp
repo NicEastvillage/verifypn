@@ -269,19 +269,24 @@ namespace PetriEngine {
         };
 
         // Process initially enabled transitions
-        for (uint32_t t = 0; t < _net->_ntransitions; ++t) {
-            uint32_t i = _net->_transitions[t].inputs;
-            uint32_t fout = _net->_transitions[t].outputs;
-            bool enabled = true;
-            for ( ; i < fout; i++) {
-                const Invariant& preinv = _net->_invariants[i];
-                if (preinv.inhibitor != (preinv.tokens > (*marking)[preinv.place])) {
-                    enabled = false;
-                    break;
+        for (uint32_t p = 0; p < _net->_nplaces; ++p) {
+            // orphans are currently under "place 0" as a special case
+            if (p == 0 || (*marking)[p] > 0) {
+                uint32_t t = _net->_placeToPtrs[p];
+                uint32_t last = _net->_placeToPtrs[p+1];
+                for (; t < last; ++t) {
+                    bool enabled = true;
+                    for (auto [finv, fout] = _net->preset(t) ; finv < fout; ++finv) {
+                        const Invariant& arc = *finv;
+                        if (arc.inhibitor != (arc.tokens > (*marking)[arc.place])) {
+                            enabled = false;
+                            break;
+                        }
+                    }
+                    if (enabled) {
+                        processEnabled(t);
+                    }
                 }
-            }
-            if (enabled) {
-                processEnabled(t);
             }
         }
 
