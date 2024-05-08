@@ -80,7 +80,7 @@ namespace PetriEngine {
 
     private:
         // === Settings
-        bool _enabled = true;
+        bool _enabled = false;
         bool _doDynamic = true;
         bool _env_TOKEN_ELIM_DEBUG = std::getenv("TOKEN_ELIM_DEBUG") != nullptr;
 

@@ -26,6 +26,7 @@ namespace PetriEngine {
         _parent = state;
 
         constructEnabled();
+        determineImpossibleFiringsAndEffects();
         if (_ordering.size() == 0) return false;
         if (_ordering.size() == 1) {
             _stubborn[_ordering.front()] = true;

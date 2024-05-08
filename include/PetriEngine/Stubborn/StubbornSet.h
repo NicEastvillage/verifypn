@@ -36,6 +36,8 @@ namespace PetriEngine {
             _stubborn = std::make_unique<bool[]>(net._ntransitions);
             _dependency = std::make_unique<uint32_t[]>(net._ntransitions);
             _places_seen = std::make_unique<uint8_t[]>(_net.numberOfPlaces());
+            _place_changes = std::make_unique<uint8_t[]>(net._nplaces);
+            _may_fire = std::make_unique<bool[]>(net._ntransitions);
             StubbornSet::reset();
             constructPrePost();
             constructDependency();
@@ -112,6 +114,8 @@ namespace PetriEngine {
         static constexpr auto PresetSeen = 1;
         static constexpr auto PostsetSeen = 2;
         static constexpr auto InhibPostsetSeen = 4;
+        static constexpr auto MayIncrease = 8;
+        static constexpr auto MayDecrease = 16;
     protected:
         const Structures::State *_parent;
 
@@ -181,10 +185,10 @@ namespace PetriEngine {
                     uint32_t cand = std::numeric_limits<uint32_t>::max();
                     uint32_t deps = std::numeric_limits<uint32_t>::max();
 
-                    // Lets try to see if we havent already added sufficient pre/post
-                    // for this transition.
+                    // Check if we have already seen one of the pre/post places disabling the transition, or
+                    // find a candidate with low dependency.
                     for (; finv < linv; ++finv) {
-                        if ((*_parent).marking()[finv->place] < finv->tokens && !finv->inhibitor) {
+                        if (!finv->inhibitor && (*_parent).marking()[finv->place] < finv->tokens && (_places_seen[finv->place] & MayIncrease) != 0) {
                             inhib = false;
                             ok = (_places_seen[finv->place] & PresetSeen) != 0;
                             if(ok)
@@ -197,7 +201,7 @@ namespace PetriEngine {
                                     deps = dependency(finv->place, false);
                                 }
                             }
-                        } else if ((*_parent)[finv->place] >= finv->tokens && finv->inhibitor) {
+                        } else if (finv->inhibitor && (*_parent)[finv->place] >= finv->tokens && (_places_seen[finv->place] & MayDecrease) != 0) {
                             inhib = true;
                             ok = (_places_seen[finv->place] & PostsetSeen) != 0;
                             if(ok)
@@ -212,15 +216,12 @@ namespace PetriEngine {
                             }
                         }
                         if (ok) break;
-
                     }
 
-                    // OK, we didnt have sufficient, we just pick whatever is left
-                    // in cand.
-                    assert(cand != std::numeric_limits<uint32_t>::max());
                     if (!ok && cand != std::numeric_limits<uint32_t>::max()) {
-                        if (!inhib) presetOf(cand);
-                        else postsetOf(cand);
+                        // We did not find a seen place, so we use the candidate.
+                        if (!inhib) presetOf(cand); // FIXME: Why not positive preset here?
+                        else postsetOf(cand); // FIXME: Why not negative postset here?
                     }
                 }
             }
@@ -229,6 +230,8 @@ namespace PetriEngine {
         std::unique_ptr<bool[]> _enabled, _stubborn;
         size_t _nenabled;
         std::unique_ptr<uint8_t[]> _places_seen;
+        std::unique_ptr<uint8_t[]> _place_changes;
+        std::unique_ptr<bool[]> _may_fire; // false implies the transition cannot fire
         std::unique_ptr<place_t[]> _places;
         std::unique_ptr<trans_t[]> _arcs;
         light_deque<uint32_t> _unprocessed, _ordering;
@@ -269,6 +272,8 @@ namespace PetriEngine {
         void constructDependency();
 
         void checkForInhibitor();
+
+        void determineImpossibleFiringsAndEffects();
 
         void set_all_stubborn() {
             std::fill(_stubborn.get(), _stubborn.get() + _net.numberOfTransitions(), true);

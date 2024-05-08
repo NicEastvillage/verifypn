@@ -28,6 +28,7 @@ namespace LTL {
         _parent = marking;
         PQL::EvaluationContext evaluationContext{_parent->marking(), &_net};
         constructEnabled();
+        determineImpossibleFiringsAndEffects();
         if (_ordering.empty()) return false;
         if (_ordering.size() == 1) {
             _stubborn[_ordering.front()] = true;

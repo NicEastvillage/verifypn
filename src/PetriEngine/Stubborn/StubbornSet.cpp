@@ -19,6 +19,7 @@
 #include <PetriEngine/Stubborn/InterestingTransitionVisitor.h>
 
 #include <memory>
+#include <queue>
 #include "PetriEngine/Stubborn/StubbornSet.h"
 #include "PetriEngine/PQL/Contexts.h"
 
@@ -196,7 +197,7 @@ namespace PetriEngine {
 
 
     void StubbornSet::addToStub(uint32_t t) {
-        if (!_stubborn[t]) {
+        if (!_stubborn[t] && _may_fire[t]) {
             _stubborn[t] = true;
             _unprocessed.push_back(t);
         }
@@ -220,10 +221,90 @@ namespace PetriEngine {
         return tLeast;
     }
 
+    void StubbornSet::determineImpossibleFiringsAndEffects() {
+
+        // Assume everything is impossible at first
+        std::fill(_place_changes.get(), _place_changes.get() + _net.numberOfPlaces(), 0);
+        std::fill(_may_fire.get(), _may_fire.get() + _net.numberOfTransitions(), false);
+
+        std::queue<uint32_t> queue;
+
+        // Helper functions
+
+        auto processIncPlace = [&](uint32_t p) {
+            if ((_place_changes[p] & MayIncrease) == 0) {
+                _place_changes[p] |= MayIncrease;
+                uint32_t i = _places[p].pre;
+                uint32_t last = _places[p].post;
+                for ( ; i < last; ++i) {
+                    uint32_t t = _arcs[i].index;
+                    if (!_may_fire[t])
+                        queue.push(t);
+                }
+            }
+        };
+
+        auto processDecPlace = [&](uint32_t p) {
+            if ((_place_changes[p] & MayDecrease) == 0) {
+                _place_changes[p] |= MayDecrease;
+                for (uint32_t t : _inhibpost[p]) {
+                    if (!_may_fire[t])
+                        queue.push(t);
+                }
+            }
+        };
+
+        auto processEnabled = [&](uint32_t t) {
+            _may_fire[t] = true;
+            // Find and process negative pre-set and positive post-set
+            for (auto [finv, linv] = _net.preset(t); finv < linv; ++finv) {
+                if (finv->direction < 0)
+                    processDecPlace(finv->place);
+            }
+            for (auto [finv, linv] = _net.postset(t); finv < linv; ++finv) {
+                if (finv->direction > 0)
+                    processIncPlace(finv->place);
+            }
+        };
+
+        // Process initially enabled transitions
+        for (uint32_t t = 0; t < _net._ntransitions; ++t) {
+            if (_enabled[t]) {
+                processEnabled(t);
+            }
+        }
+
+        // Compute fixed point of impossible firings and effects
+        while (!queue.empty()) {
+            uint32_t t = queue.front();
+            queue.pop();
+            if (_may_fire[t]) continue;
+
+            // Can t become enabled?
+            bool enabled = true;
+            uint32_t finv = _net._transitions[t].inputs;
+            uint32_t linv = _net._transitions[t].outputs;
+            for (; finv < linv; ++finv) {
+                const Invariant& arc = _net._invariants[finv];
+                bool notInhibited = !arc.inhibitor || arc.tokens > _parent->marking()[arc.place] || (_place_changes[arc.place] & MayDecrease) > 0;
+                bool enoughTokens = arc.inhibitor || arc.tokens <= _parent->marking()[arc.place] || (_place_changes[arc.place] & MayIncrease) > 0;
+                if (!notInhibited || !enoughTokens) {
+                    enabled = false;
+                    break;
+                }
+            }
+            if (enabled) {
+                processEnabled(t);
+            }
+        }
+    }
+
     void StubbornSet::reset() {
         std::fill(_enabled.get(), _enabled.get() + _net.numberOfTransitions(), false);
         std::fill(_stubborn.get(), _stubborn.get() + _net.numberOfTransitions(), false);
         std::fill(_places_seen.get(), _places_seen.get() + _net.numberOfPlaces(), 0);
+        std::fill(_place_changes.get(), _place_changes.get() + _net.numberOfPlaces(), MayIncrease | MayDecrease);
+        std::fill(_may_fire.get(), _may_fire.get() + _net.numberOfTransitions(), true);
         _ordering.clear();
         _nenabled = 0;
         //_tid = 0;
