@@ -271,19 +271,9 @@ namespace PetriEngine {
             }
         };
 
-        // Process initially enabled transitions
+        // Check each transition at least once
         for (int t = 0; t < _net->_ntransitions; ++t) {
-            uint16_t dead_deps = 0;
-            for (auto [finv, fout] = _net->preset(t); finv < fout; ++finv) {
-                const Invariant& arc = *finv;
-                if (arc.inhibitor != (arc.tokens > (*marking)[arc.place])) {
-                    dead_deps++;
-                }
-            }
-            _dead_deps[t] = dead_deps;
-            if (dead_deps == 0) {
-                processEnabled(t);
-            }
+            queue.push(t);
         }
 
         // Compute fixed point of effectively dead places and transitions
