@@ -114,6 +114,7 @@ namespace PetriEngine {
         static constexpr auto PresetSeen = 1;
         static constexpr auto PostsetSeen = 2;
         static constexpr auto InhibPostsetSeen = 4;
+
         static constexpr auto MayIncrease = 8;
         static constexpr auto MayDecrease = 16;
     protected:
@@ -188,7 +189,7 @@ namespace PetriEngine {
                     // Check if we have already seen one of the pre/post places disabling the transition, or
                     // find a candidate with low dependency.
                     for (; finv < linv; ++finv) {
-                        if (!finv->inhibitor && (*_parent).marking()[finv->place] < finv->tokens && (_places_seen[finv->place] & MayIncrease) != 0) {
+                        if (!finv->inhibitor && (*_parent).marking()[finv->place] < finv->tokens && (_place_changes[finv->place] & MayIncrease) != 0) {
                             inhib = false;
                             ok = (_places_seen[finv->place] & PresetSeen) != 0;
                             if(ok)
@@ -201,7 +202,7 @@ namespace PetriEngine {
                                     deps = dependency(finv->place, false);
                                 }
                             }
-                        } else if (finv->inhibitor && (*_parent)[finv->place] >= finv->tokens && (_places_seen[finv->place] & MayDecrease) != 0) {
+                        } else if (finv->inhibitor && (*_parent)[finv->place] >= finv->tokens && (_place_changes[finv->place] & MayDecrease) != 0) {
                             inhib = true;
                             ok = (_places_seen[finv->place] & PostsetSeen) != 0;
                             if(ok)
