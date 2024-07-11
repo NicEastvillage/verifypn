@@ -13,13 +13,14 @@ namespace PetriEngine {
     using Condition_ptr = PQL::Condition_ptr;
     using Marking = Structures::State;
 
-    const static uint8_t IN_Q_INC = 1 << 0;
-    const static uint8_t IN_Q_DEC = 1 << 1;
-    const static uint8_t VIS_INC = 1 << 2;
-    const static uint8_t VIS_DEC = 1 << 3;
-    const static uint8_t MUST_KEEP = 1 << 4;
-    const static uint8_t CAN_INC = 1 << 5;
-    const static uint8_t CAN_DEC = 1 << 6;
+    const static uint16_t IN_Q_INC = 1 << 0;
+    const static uint16_t IN_Q_DEC = 1 << 1;
+    const static uint16_t AIM_INC = 1 << 2;
+    const static uint16_t AIM_DEC = 1 << 3;
+    const static uint16_t VIS_INC = 1 << 4;
+    const static uint16_t VIS_DEC = 1 << 5;
+    const static uint16_t CAN_INC = 1 << 6;
+    const static uint16_t CAN_DEC = 1 << 7;
 
     class Extrapolator {
     public:
@@ -72,7 +73,7 @@ namespace PetriEngine {
 
         void extrapolateDynamicReachRelevance(PetriEngine::Marking *marking, PetriEngine::Condition *query);
 
-        void findDynamicVisiblePlaces(PetriEngine::Condition *query);
+        void findDynamicVisiblePlaces(const PetriEngine::Marking *marking, PetriEngine::Condition *query);
 
         void extrapolateStaticReachRelevance(PetriEngine::Marking *marking, PetriEngine::Condition *query);
 

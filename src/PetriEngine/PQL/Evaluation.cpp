@@ -29,10 +29,10 @@ namespace PetriEngine { namespace PQL {
         Visitor::visit(eval, (*condition)[0]);
 
         auto v1 = eval.value();
-        if constexpr (std::is_same<EvaluateAndSetVisitor,V>::value)
+        if constexpr (std::is_same<EvaluateAndSetVisitor<true>,V>::value || std::is_same<EvaluateAndSetVisitor<false>,V>::value)
             (*condition)[0]->setEval(v1);
         Visitor::visit(eval, (*condition)[1]);
-        if constexpr (std::is_same<EvaluateAndSetVisitor,V>::value)
+        if constexpr (std::is_same<EvaluateAndSetVisitor<true>,V>::value || std::is_same<EvaluateAndSetVisitor<false>,V>::value)
             (*condition)[1]->setEval(eval.value());
         if      constexpr (std::is_same<C,EqualCondition>::value)
             return v1 == eval.value();
@@ -309,72 +309,103 @@ namespace PetriEngine { namespace PQL {
 
     /****************** Evaluate and Set *******************/
 
-    Condition::Result evaluateAndSet(Condition *element, const EvaluationContext &context) {
-        EvaluateAndSetVisitor visitor(context);
-        Visitor::visit(&visitor, element);
-        return visitor.get_return_value();
+    Condition::Result evaluateAndSet(Condition *element, const EvaluationContext &context, bool short_circuit) {
+        if (short_circuit) {
+            EvaluateAndSetVisitor<true> visitor(context);
+            Visitor::visit(&visitor, element);
+            return visitor.get_return_value();
+        } else {
+            EvaluateAndSetVisitor<false> visitor(context);
+            Visitor::visit(&visitor, element);
+            return visitor.get_return_value();
+        }
     }
 
-    void EvaluateAndSetVisitor::_accept(SimpleQuantifierCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(SimpleQuantifierCondition *element) {
         _return_value = {Condition::RUNKNOWN};
     }
 
-    void EvaluateAndSetVisitor::_accept(GCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(GCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RFALSE)
             _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(FCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(FCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RTRUE)
             _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(EGCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(EGCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RFALSE) _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(AGCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(AGCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RFALSE) _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(EFCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(EFCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RTRUE) _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(AFCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(AFCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RTRUE) _return_value = {Condition::RUNKNOWN};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(UntilCondition *element) {
-        Visitor::visit(this, (*element)[1]);
-        if (_return_value != Condition::RFALSE)
-            return;
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(UntilCondition *element) {
+        if (SHORT_CIRCUIT) {
+            Visitor::visit(this, (*element)[1]);
+            if (_return_value != Condition::RFALSE) {
+                element->setSatisfied(_return_value);
+                return;
+            }
 
-        Visitor::visit(this, (*element)[0]);
-        if (_return_value == Condition::RFALSE)
-            return;
-        _return_value = {Condition::RUNKNOWN};
+            Visitor::visit(this, (*element)[0]);
+            if (_return_value == Condition::RFALSE) {
+                element->setSatisfied(_return_value);
+                return;
+            }
+            _return_value = {Condition::RUNKNOWN};
+            element->setSatisfied(_return_value);
+        } else {
+            Visitor::visit(this, (*element)[0]);
+            auto left = _return_value;
+            Visitor::visit(this, (*element)[1]);
+            auto right = _return_value;
+            if (right == Condition::RTRUE) _return_value = Condition::RTRUE;
+            else if (left == Condition::RFALSE && right == Condition::RFALSE) _return_value = Condition::RFALSE;
+            else _return_value = Condition::RUNKNOWN;
+            element->setSatisfied(_return_value);
+        }
     }
 
-    void EvaluateAndSetVisitor::_accept(AndCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(AndCondition *element) {
         Condition::Result res = Condition::RTRUE;
         for (auto &c: element->getOperands()) {
             Visitor::visit(this, c);
             if (_return_value == Condition::RFALSE) {
                 res = Condition::RFALSE;
-                break;
+                if (SHORT_CIRCUIT) break;
             } else if (_return_value == Condition::RUNKNOWN) {
                 res = Condition::RUNKNOWN;
             }
@@ -383,13 +414,14 @@ namespace PetriEngine { namespace PQL {
         _return_value = {res};
     }
 
-    void EvaluateAndSetVisitor::_accept(OrCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(OrCondition *element) {
         Condition::Result res = Condition::RFALSE;
         for (auto &c: element->getOperands()) {
             Visitor::visit(this, c);
             if (_return_value == Condition::RTRUE) {
                 res = Condition::RTRUE;
-                break;
+                if (SHORT_CIRCUIT) break;
             } else if (_return_value == Condition::RUNKNOWN) {
                 res = Condition::RUNKNOWN;
             }
@@ -398,49 +430,57 @@ namespace PetriEngine { namespace PQL {
         _return_value = {res};
     }
 
-    void EvaluateAndSetVisitor::_accept(CompareConjunction *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(CompareConjunction *element) {
         auto res = evaluate(element, _context);
         element->setSatisfied(res);
         _return_value = {res};
     }
 
-    void EvaluateAndSetVisitor::_accept(LessThanCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(LessThanCondition *element) {
         auto res = compare(this, element);
         element->setSatisfied(res);
         _return_value = {res ? Condition::RTRUE : Condition::RFALSE};
     }
 
-    void EvaluateAndSetVisitor::_accept(LessThanOrEqualCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(LessThanOrEqualCondition *element) {
         auto res = compare(this, element);
         element->setSatisfied(res);
         _return_value = {res ? Condition::RTRUE : Condition::RFALSE};
     }
 
-    void EvaluateAndSetVisitor::_accept(EqualCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(EqualCondition *element) {
         auto res = compare(this, element);
         element->setSatisfied(res);
         _return_value = res ? Condition::RTRUE : Condition::RFALSE;
     }
 
-    void EvaluateAndSetVisitor::_accept(NotEqualCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(NotEqualCondition *element) {
         auto res = compare(this, element);
         element->setSatisfied(res);
         _return_value = {res ? Condition::RTRUE : Condition::RFALSE};
     }
 
-    void EvaluateAndSetVisitor::_accept(NotCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(NotCondition *element) {
         Visitor::visit(this, (*element)[0]);
         if (_return_value != Condition::RUNKNOWN)
             _return_value = {_return_value == Condition::RFALSE ? Condition::RTRUE : Condition::RFALSE};
         element->setSatisfied(_return_value);
     }
 
-    void EvaluateAndSetVisitor::_accept(BooleanCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(BooleanCondition *element) {
         element->setSatisfied(element->value);
         _return_value = {element->value ? Condition::RTRUE : Condition::RFALSE};
     }
 
-    void EvaluateAndSetVisitor::_accept(DeadlockCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(DeadlockCondition *element) {
         if (!_context.net()) {
             _return_value = {Condition::RFALSE};
         } else {
@@ -449,13 +489,15 @@ namespace PetriEngine { namespace PQL {
         }
     }
 
-    void EvaluateAndSetVisitor::_accept(UnfoldedUpperBoundsCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(UnfoldedUpperBoundsCondition *element) {
         auto res = evaluate(element, _context);
         element->setSatisfied(res);
         _return_value = {res};
     }
 
-    void EvaluateAndSetVisitor::_accept(ShallowCondition *element) {
+    template <bool SHORT_CIRCUIT>
+    void EvaluateAndSetVisitor<SHORT_CIRCUIT>::_accept(ShallowCondition *element) {
         Visitor::visit(this, element->getCompiled());
     }
 

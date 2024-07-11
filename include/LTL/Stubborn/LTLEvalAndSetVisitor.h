@@ -23,7 +23,7 @@
 
 namespace LTL {
 
-    class LTLEvalAndSetVisitor : public PetriEngine::PQL::EvaluateAndSetVisitor {
+    class LTLEvalAndSetVisitor : public PetriEngine::PQL::EvaluateAndSetVisitor<true> {
 
     public:
         LTLEvalAndSetVisitor(const PetriEngine::PQL::EvaluationContext &context) : EvaluateAndSetVisitor(context) {}

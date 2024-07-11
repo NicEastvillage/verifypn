@@ -139,8 +139,9 @@ namespace PetriEngine { namespace PQL {
         void _accept(ShallowCondition *element) override;
     };
 
-    Condition::Result evaluateAndSet(Condition *element, const EvaluationContext &context);
+    Condition::Result evaluateAndSet(Condition *element, const EvaluationContext &context, bool short_circuit=true);
 
+    template <bool SHORT_CIRCUIT>
     class EvaluateAndSetVisitor : public BaseEvaluationVisitor {
     public:
         explicit EvaluateAndSetVisitor(const EvaluationContext& context) : BaseEvaluationVisitor(context) {}

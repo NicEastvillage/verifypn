@@ -2,17 +2,19 @@
 #include "PetriEngine/Extrapolator.h"
 #include "PetriEngine/PQL/PlaceUseVisitor.h"
 #include "PetriEngine/PQL/PredicateCheckers.h"
+#include "PetriEngine/PQL/Evaluation.h"
+
 namespace PetriEngine {
     class PlaceReachabilityDirectionVisitor : public PQL::Visitor {
     public:
-        explicit PlaceReachabilityDirectionVisitor(size_t n_places) : _in_use(n_places) {}
+        explicit PlaceReachabilityDirectionVisitor(size_t n_places) : _flags(n_places) {}
 
-        uint32_t operator[](size_t id) const {
-            return _in_use[id];
+        uint8_t operator[](size_t id) const {
+            return _flags[id];
         }
 
         [[nodiscard]] const std::vector<uint8_t>& get_result() const {
-            return _in_use;
+            return _flags;
         }
 
     protected:
@@ -26,39 +28,41 @@ namespace PetriEngine {
             for (auto& e : *element) Visitor::visit(this, e);
         }
         void _accept(const PQL::LessThanCondition* element) override {
-            direction = IN_Q_DEC;
-            Visitor::visit(this, (*element)[0]);
-            direction = IN_Q_INC;
-            Visitor::visit(this, (*element)[1]);
+            auto flags_lhs = element->isSatisfied() ? IN_Q_DEC : IN_Q_DEC | AIM_DEC;
+            auto flags_rhs = element->isSatisfied() ? IN_Q_INC : IN_Q_INC | AIM_INC;
+            direction = flags_lhs; Visitor::visit(this, (*element)[0]);
+            direction = flags_rhs; Visitor::visit(this, (*element)[1]);
         }
         void _accept(const PQL::LessThanOrEqualCondition* element) override {
-            direction = IN_Q_DEC;
-            Visitor::visit(this, (*element)[0]);
-            direction = IN_Q_INC;
-            Visitor::visit(this, (*element)[1]);
+            auto flags_lhs = element->isSatisfied() ? IN_Q_DEC : IN_Q_DEC | AIM_DEC;
+            auto flags_rhs = element->isSatisfied() ? IN_Q_INC : IN_Q_INC | AIM_INC;
+            direction = flags_lhs; Visitor::visit(this, (*element)[0]);
+            direction = flags_rhs; Visitor::visit(this, (*element)[1]);
         }
         void _accept(const PQL::EqualCondition* element) override {
             throw std::runtime_error("EqualCondition should not exist in compiled reachability expression");
+            // TODO: Negated??
             direction = IN_Q_INC | IN_Q_DEC;
             Visitor::visit(this, (*element)[0]);
             Visitor::visit(this, (*element)[1]);
         }
         void _accept(const PQL::NotEqualCondition* element) override {
             throw std::runtime_error("NotEqualCondition should not exist in compiled reachability expression");
+            // TODO: Negated??
             direction = IN_Q_INC | IN_Q_DEC;
             Visitor::visit(this, (*element)[0]);
             Visitor::visit(this, (*element)[1]);
         }
         void _accept(const PQL::UnfoldedIdentifierExpr* element) override {
-            _in_use[element->offset()] |= direction;
+            _flags[element->offset()] |= direction;
         }
         void _accept(const PQL::PlusExpr* element) override {
             // TODO: Test this
-            for(auto& p : element->places()) _in_use[p.first] |= direction;
+            for(auto& p : element->places()) _flags[p.first] |= direction;
         }
         void _accept(const PQL::MultiplyExpr* element) override {
             // TODO: Test this. Especially negative values
-            for(auto& p : element->places()) _in_use[p.first] |= direction;
+            for(auto& p : element->places()) _flags[p.first] |= direction;
         }
         void _accept(const PQL::MinusExpr* element) override {
             // TODO: Do we need to negate here?
@@ -69,22 +73,18 @@ namespace PetriEngine {
             for(auto& e : element->expressions()) Visitor::visit(this, e);
         }
         void _accept(const PQL::CompareConjunction* element) override {
-            // Compiled fireability proposition
-            if (element->isNegated() == negated) {
-                for (auto& e : *element) {
-                    if (e._lower != 0) _in_use[e._place] |= IN_Q_INC;
-                    if (e._upper != std::numeric_limits<uint32_t>::max()) _in_use[e._place] |= IN_Q_DEC;
-                }
-            } else {
-                for (auto& e : *element) {
-                    if (e._lower != 0) _in_use[e._place] |= IN_Q_DEC;
-                    if (e._upper != std::numeric_limits<uint32_t>::max()) _in_use[e._place] |= IN_Q_INC;
-                }
+            auto flags_lower = element->isSatisfied() ? IN_Q_INC : IN_Q_INC | AIM_INC;
+            auto flags_upper = element->isSatisfied() ? IN_Q_DEC : IN_Q_DEC | AIM_DEC;
+            if (element->isNegated()) std::swap(flags_lower, flags_upper);
+            for (auto& e : *element) {
+                if (e._lower != 0) _flags[e._place] |= flags_lower;
+                if (e._upper != std::numeric_limits<uint32_t>::max()) _flags[e._place] |= flags_upper;
             }
         }
         void _accept(const PQL::UnfoldedUpperBoundsCondition* element) override {
+            auto flags = element->isSatisfied() ? IN_Q_INC : IN_Q_INC | AIM_INC;
             for(auto& p : element->places())
-                _in_use[p._place] |= IN_Q_INC;
+                _flags[p._place] |= flags;
         }
 
         void _accept(const PQL::EFCondition* el) override {
@@ -119,8 +119,7 @@ namespace PetriEngine {
         }
 
     private:
-        std::vector<uint8_t> _in_use;
-        bool negated = false;
+        std::vector<uint8_t> _flags;
         uint8_t direction = 0;
     };
 
@@ -323,26 +322,25 @@ namespace PetriEngine {
         }
 
         std::stringstream before;
+        std::vector<bool> eliminated;
         if (_env_TOKEN_ELIM_DEBUG) {
             for (uint32_t i = 0; i < _net->_nplaces; i++) {
                 before << (*marking)[i];
             }
-        }
-
-        if (before.str() == "00110000000010000000000000001100000000000000000000000101000000001") {
-            std::cout << "Debugging\n";
+            eliminated.resize(_net->_nplaces);
         }
 
         findDeadPlacesAndTransitions(marking);
-        findDynamicVisiblePlaces(query);
+        findDynamicVisiblePlaces(marking, query);
 
         for (uint32_t i = 0; i < _net->_nplaces; ++i) {
-            if ((_pflags[i] & (VIS_INC | VIS_DEC | MUST_KEEP | IN_Q_INC | IN_Q_DEC)) == 0) {
+            if ((_pflags[i] & (VIS_INC | VIS_DEC | IN_Q_INC | IN_Q_DEC)) == 0) {
                 // Extrapolating below the upper bound may introduce behaviour
                 uint32_t cur = marking->marking()[i];
                 uint32_t ex = std::min(cur, _extBounds[i]);
                 _tokensExtrapolated += cur - ex;
                 marking->marking()[i] = ex;
+                if (_env_TOKEN_ELIM_DEBUG && cur - ex > 0) eliminated[i] = true;
             }
         }
 
@@ -361,9 +359,9 @@ namespace PetriEngine {
 
             std::cout << before.str() << "->" << after.str() << " | Visible: ";
             for (uint32_t i = 0; i < _net->_nplaces; ++i) {
-                if (inQuery[i] || (_pflags[i] & (VIS_INC | VIS_DEC | MUST_KEEP)) > 0) {
+                if (inQuery[i] || (_pflags[i] & (VIS_INC | VIS_DEC)) > 0) {
                     std::cout << *_net->placeNames()[i] << "#" << inQuery[i] << ((_pflags[i] & VIS_INC) > 0)
-                              << ((_pflags[i] & VIS_DEC) > 0) << ((_pflags[i] & MUST_KEEP) > 0) << " ";
+                              << ((_pflags[i] & VIS_DEC) > 0) << " ";
                 }
             }
             std::cout << "| Live: ";
@@ -373,27 +371,33 @@ namespace PetriEngine {
                               << ((_pflags[i] & CAN_DEC) > 0) << " ";
                 }
             }
+            std::cout << "| Elim: ";
+            for (uint32_t i = 0; i < _net->numberOfPlaces(); ++i) {
+                if (eliminated[i])
+                    std::cout << *_net->placeNames()[i] << " ";
+            }
             std::stringstream ss;
             query->toString(ss);
             std::cout << "| " << ss.str() << "\n";
         }
     }
 
-    void Extrapolator::findDynamicVisiblePlaces(Condition *query) {
+    void Extrapolator::findDynamicVisiblePlaces(const Marking *marking, Condition *query) {
 
+        PQL::evaluateAndSet(query, PQL::EvaluationContext(marking->marking(), _net), false);
         PlaceReachabilityDirectionVisitor pv(_net->numberOfPlaces());
         PQL::Visitor::visit(&pv, query);
-        auto& use = pv.get_result();
+        auto& q_use = pv.get_result();
 
         std::queue<uint32_t> queue;
 
         for (uint32_t p = 0; p < _net->_nplaces; ++p) {
-            if (use[p] > 0) {
-                _pflags[p] |= use[p];
-                if ((_pflags[p] & IN_Q_DEC) > 0 && (_pflags[p] & CAN_DEC) > 0) {
+            if (q_use[p] > 0) {
+                _pflags[p] |= q_use[p];
+                if ((_pflags[p] & AIM_DEC) > 0 && (_pflags[p] & CAN_DEC) > 0) {
                     _pflags[p] |= VIS_DEC;
                 }
-                if ((_pflags[p] & IN_Q_INC) > 0 && (_pflags[p] & CAN_INC) > 0) {
+                if ((_pflags[p] & AIM_INC) > 0 && (_pflags[p] & CAN_INC) > 0) {
                     _pflags[p] |= VIS_INC;
                 }
                 queue.push(p);
@@ -425,6 +429,18 @@ namespace PetriEngine {
                                 // This consumer may need more tokens to fire, so increases are also visible
                                 _pflags[arc.place] |= VIS_INC;
                             }
+                            // Side effect on a query place may give us additional aims
+                            if (arc.direction < 0 && (_pflags[arc.place] & IN_Q_INC) > 0 && (_pflags[arc.place] & AIM_INC) == 0 && (_pflags[arc.place] & CAN_INC) > 0) {
+                                _pflags[arc.place] |= VIS_INC | AIM_INC;
+                            }
+                        }
+                    }
+                    for (auto [finv, linv] = _net->postset(t->index) ; finv < linv; ++finv) {
+                        const Invariant& arc = *finv;
+                        // Side effect on a query place may give us additional aims
+                        if (arc.direction > 0 && (_pflags[arc.place] & IN_Q_DEC) > 0 && (_pflags[arc.place] & AIM_DEC) == 0 && (_pflags[arc.place] & CAN_DEC) > 0) {
+                            _pflags[arc.place] |= VIS_DEC | AIM_DEC;
+                            queue.push(arc.place);
                         }
                     }
                 }
@@ -447,6 +463,18 @@ namespace PetriEngine {
                                 queue.push(arc.place);
                                 _pflags[arc.place] |= VIS_INC;
                             }
+                            // Side effect on a query place may give us additional aims
+                            if (arc.direction < 0 && (_pflags[arc.place] & IN_Q_INC) > 0 && (_pflags[arc.place] & AIM_INC) == 0 && (_pflags[arc.place] & CAN_INC) > 0) {
+                                _pflags[arc.place] |= VIS_INC | AIM_INC;
+                            }
+                        }
+                    }
+                    for (auto [finv, linv] = _net->postset(t->index) ; finv < linv; ++finv) {
+                        const Invariant& arc = *finv;
+                        // Side effect on a query place may give us additional aims
+                        if (arc.direction > 0 && (_pflags[arc.place] & IN_Q_DEC) > 0 && (_pflags[arc.place] & AIM_DEC) == 0 && (_pflags[arc.place] & CAN_DEC) > 0) {
+                            _pflags[arc.place] |= VIS_DEC | AIM_DEC;
+                            queue.push(arc.place);
                         }
                     }
                 }
@@ -462,11 +490,11 @@ namespace PetriEngine {
             bool affectsVisible = false;
             for ( ; finv < linv; ++finv) {
                 const Invariant& arc = _net->_invariants[finv];
-                if (arc.direction > 0 && (_pflags[arc.place] & (VIS_INC | IN_Q_INC)) > 0) {
+                if (arc.direction > 0 && (_pflags[arc.place] & VIS_INC) > 0) {
                     affectsVisible = true;
                     break;
                 }
-                if (arc.direction < 0 && (_pflags[arc.place] & (VIS_DEC | IN_Q_DEC)) > 0) {
+                if (arc.direction < 0 && (_pflags[arc.place] & VIS_DEC) > 0) {
                     affectsVisible = true;
                     break;
                 }
@@ -477,7 +505,7 @@ namespace PetriEngine {
                 for ( ; finv < linv; ++finv) {
                     const Invariant& arc = _net->_invariants[finv];
                     if (!arc.inhibitor) {
-                        _pflags[arc.place] |= MUST_KEEP;
+                        _pflags[arc.place] |= VIS_INC | VIS_DEC; // Must keep
                     }
                 }
             }
