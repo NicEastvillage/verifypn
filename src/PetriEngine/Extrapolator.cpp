@@ -7,15 +7,7 @@
 namespace PetriEngine {
     class PlaceReachabilityDirectionVisitor : public PQL::Visitor {
     public:
-        explicit PlaceReachabilityDirectionVisitor(size_t n_places) : _flags(n_places) {}
-
-        uint8_t operator[](size_t id) const {
-            return _flags[id];
-        }
-
-        [[nodiscard]] const std::vector<uint8_t>& get_result() const {
-            return _flags;
-        }
+        explicit PlaceReachabilityDirectionVisitor(uint8_t *flags) : _flags(flags) {}
 
     protected:
         void _accept(const PQL::NotCondition* element) override {
@@ -54,15 +46,20 @@ namespace PetriEngine {
             Visitor::visit(this, (*element)[1]);
         }
         void _accept(const PQL::UnfoldedIdentifierExpr* element) override {
-            _flags[element->offset()] |= direction;
+            auto d = direction;
+            if (element->getEval() == 0) d &= ~AIM_DEC; // Its 0 already, so don't aim to decrease (at first)
+            _flags[element->offset()] |= d;
         }
         void _accept(const PQL::PlusExpr* element) override {
-            // TODO: Test this
-            for(auto& p : element->places()) _flags[p.first] |= direction;
+            auto d = direction;
+            if (element->getEval() == 0) d &= ~AIM_DEC; // Its 0 already, so don't aim to decrease (at first)
+            for (auto &p: element->places())_flags[p.first] |= d;
         }
         void _accept(const PQL::MultiplyExpr* element) override {
             // TODO: Test this. Especially negative values
-            for(auto& p : element->places()) _flags[p.first] |= direction;
+            auto d = direction;
+            if (element->getEval() == 0) d &= ~AIM_DEC; // Its 0 already, so don't aim to decrease (at first)
+            for(auto& p : element->places()) _flags[p.first] |= d;
         }
         void _accept(const PQL::MinusExpr* element) override {
             // TODO: Do we need to negate here?
@@ -119,7 +116,7 @@ namespace PetriEngine {
         }
 
     private:
-        std::vector<uint8_t> _flags;
+        uint8_t *_flags;
         uint8_t direction = 0;
     };
 
@@ -385,21 +382,15 @@ namespace PetriEngine {
     void Extrapolator::findDynamicVisiblePlaces(const Marking *marking, Condition *query) {
 
         PQL::evaluateAndSet(query, PQL::EvaluationContext(marking->marking(), _net), false);
-        PlaceReachabilityDirectionVisitor pv(_net->numberOfPlaces());
+        PlaceReachabilityDirectionVisitor pv(_pflags.data());
         PQL::Visitor::visit(&pv, query);
-        auto& q_use = pv.get_result();
 
         std::queue<uint32_t> queue;
 
         for (uint32_t p = 0; p < _net->_nplaces; ++p) {
-            if (q_use[p] > 0) {
-                _pflags[p] |= q_use[p];
-                if ((_pflags[p] & AIM_DEC) > 0 && (_pflags[p] & CAN_DEC) > 0) {
-                    _pflags[p] |= VIS_DEC;
-                }
-                if ((_pflags[p] & AIM_INC) > 0 && (_pflags[p] & CAN_INC) > 0) {
-                    _pflags[p] |= VIS_INC;
-                }
+            if ((_pflags[p] & (AIM_INC | AIM_DEC)) > 0) {
+                if ((_pflags[p] & AIM_INC) > 0 && (_pflags[p] & CAN_INC) > 0) _pflags[p] |= VIS_INC;
+                if ((_pflags[p] & AIM_DEC) > 0 && (_pflags[p] & CAN_DEC) > 0) _pflags[p] |= VIS_DEC;
                 queue.push(p);
             }
         }
@@ -518,6 +509,8 @@ namespace PetriEngine {
         if (it != _cache.end()) {
             visible = &it->second;
         } else {
+            _pflags.resize(_net->_nplaces);
+            std::fill(_pflags.begin(), _pflags.end(), 0);
             visible = &findStaticVisiblePlaces(query);
         }
 
@@ -541,18 +534,17 @@ namespace PetriEngine {
             return _cache.at(query);
         }
 
-        PlaceReachabilityDirectionVisitor puv(_net->numberOfPlaces());
+        PlaceReachabilityDirectionVisitor puv(_pflags.data());
         PQL::Visitor::visit(&puv, query);
-        auto& use = puv.get_result();
 
         std::vector<bool> vis_inc(_net->_nplaces); // Places where token increment is visible to query
         std::vector<bool> vis_dec(_net->_nplaces); // Places where token decrement is visible to query
         std::vector<uint32_t> queue;
 
         for (uint32_t p = 0; p < _net->_nplaces; ++p) {
-            if (use[p] > 0) {
-                vis_inc[p] = (use[p] & IN_Q_INC) > 0;
-                vis_dec[p] = (use[p] & IN_Q_DEC) > 0;
+            if ((_pflags[p] & (IN_Q_INC | IN_Q_DEC)) > 0) {
+                vis_inc[p] = (_pflags[p] & IN_Q_INC) > 0;
+                vis_dec[p] = (_pflags[p] & IN_Q_DEC) > 0;
                 queue.push_back(p);
             }
         }
@@ -620,8 +612,8 @@ namespace PetriEngine {
             query->toString(ss);
             std::cout << "Visible places : ";
             for (uint32_t i = 0; i < _net->_nplaces; ++i) {
-                if (use[i] > 0 || vis_inc[i] || vis_dec[i]) {
-                    std::cout << *_net->placeNames()[i] << "#" << ((use[i] & (IN_Q_INC | IN_Q_DEC)) > 0) << vis_inc[i]
+                if ((_pflags[i] & (IN_Q_INC | IN_Q_DEC)) > 0 || vis_inc[i] || vis_dec[i]) {
+                    std::cout << *_net->placeNames()[i] << "#" << ((_pflags[i] & (IN_Q_INC | IN_Q_DEC)) > 0) << vis_inc[i]
                               << vis_dec[i] << " ";
                 }
             }
