@@ -13,7 +13,7 @@ class PetriConfig : public DependencyGraph::Configuration {
 public:
     using Condition = PetriEngine::PQL::Condition;
     PetriConfig() : 
-        DependencyGraph::Configuration(), marking(0), query(NULL) 
+        DependencyGraph::Configuration(), marking(0), query(NULL), extrapolated(false)
     {}
     
     PetriConfig(size_t t_marking, Condition *t_query) :
@@ -22,7 +22,7 @@ public:
 
     size_t marking;
     Condition *query;
-
+    bool extrapolated;
 };
 
 }

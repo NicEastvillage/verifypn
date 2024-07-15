@@ -67,7 +67,15 @@ std::vector<DependencyGraph::Edge*> OnTheFlyDG::successors(Configuration *c)
     //    v->printConfiguration();
     std::vector<Edge*> succs;
     auto query_type = v->query->getQueryType();
-    if(query_type == EVAL){
+    if (!v->extrapolated) {
+        extrapolated_marking.copy(query_marking.marking(), n_places);
+        extrapolator->extrapolate(&extrapolated_marking, v->query);
+        Edge *e = newEdge(*v, 0);
+        Configuration *c = createConfiguration(extrapolated_marking, v->getOwner(), v->query, true);
+        e->addTarget(c);
+        succs.push_back(e);
+    }
+    else if(query_type == EVAL){
         assert(false);
         //assert(false && "Someone told me, this was a bad place to be.");
         if (fastEval(query, &query_marking) == Condition::RTRUE){
@@ -523,7 +531,7 @@ Configuration* OnTheFlyDG::initialConfiguration()
         query_marking.setMarking(net->makeInitialMarking());
         extrapolated_marking.setMarking(net->makeInitialMarking());
         auto o = owner(working_marking, this->query);
-        initial_config = createConfiguration(working_marking, o, this->query);
+        initial_config = createConfiguration(working_marking, o, this->query, false);
     }
     return initial_config;
 }
@@ -616,15 +624,12 @@ size_t OnTheFlyDG::tokensExtrapolated() const {
     return extrapolator->tokensExtrapolated();
 }
 
-PetriConfig *OnTheFlyDG::createConfiguration(const Marking& marking, size_t own, Condition* t_query)
+PetriConfig *OnTheFlyDG::createConfiguration(const Marking& marking, size_t own, Condition* t_query, bool extrapolated)
 {
-    extrapolated_marking.copy(marking.marking(), n_places);
-    extrapolator->extrapolate(&extrapolated_marking, t_query);
-
-    size_t encoded = createMarking(extrapolated_marking);
+    size_t encoded = createMarking(marking);
     auto& configs = trie.get_data(encoded);
     for(PetriConfig* c : configs){
-        if(c->query == t_query)
+        if(c->query == t_query && c->extrapolated == extrapolated)
             return c;
     }
 
@@ -634,6 +639,7 @@ PetriConfig *OnTheFlyDG::createConfiguration(const Marking& marking, size_t own,
     PetriConfig* newConfig = new (mem) PetriConfig();
     newConfig->marking = encoded;
     newConfig->query = t_query;
+    newConfig->extrapolated = extrapolated;
     newConfig->setOwner(own);
     configs.push_back(newConfig);
     return newConfig;
@@ -641,7 +647,7 @@ PetriConfig *OnTheFlyDG::createConfiguration(const Marking& marking, size_t own,
 
 
 
-size_t OnTheFlyDG::createMarking(Marking& t_marking){
+size_t OnTheFlyDG::createMarking(const Marking& t_marking){
     size_t sum = 0;
     bool allsame = true;
     uint32_t val = 0;

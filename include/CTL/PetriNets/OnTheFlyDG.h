@@ -94,12 +94,12 @@ protected:
             }
         }
     }
-    PetriConfig *createConfiguration(const Marking& marking, size_t own, Condition* query);
-    PetriConfig *createConfiguration(const Marking& marking, size_t own, const Condition_ptr& query)
+    PetriConfig *createConfiguration(const Marking& marking, size_t own, Condition* query, bool extrapolated = false);
+    PetriConfig *createConfiguration(const Marking& marking, size_t own, const Condition_ptr& query, bool extrapolated = false)
     {
-        return createConfiguration(marking, own, query.get());
+        return createConfiguration(marking, own, query.get(), extrapolated);
     }
-    size_t createMarking(Marking &marking);
+    size_t createMarking(const Marking &marking);
     void markingStats(const uint32_t* marking, size_t& sum, bool& allsame, uint32_t& val, uint32_t& active, uint32_t& last);
 
     DependencyGraph::Edge* newEdge(DependencyGraph::Configuration &t_source, uint32_t weight);
