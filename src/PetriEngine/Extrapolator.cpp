@@ -7,7 +7,7 @@
 namespace PetriEngine {
     class PlaceReachabilityDirectionVisitor : public PQL::Visitor {
     public:
-        explicit PlaceReachabilityDirectionVisitor(uint8_t *flags) : _flags(flags) {}
+        explicit PlaceReachabilityDirectionVisitor(uint8_t *flags, const Marking *marking) : _flags(flags), _marking(marking) {}
 
     protected:
         void _accept(const PQL::NotCondition* element) override {
@@ -47,7 +47,7 @@ namespace PetriEngine {
         }
         void _accept(const PQL::UnfoldedIdentifierExpr* element) override {
             auto d = direction;
-            if (element->getEval() == 0) d &= ~AIM_DEC; // Its 0 already, so don't aim to decrease (at first)
+            if (_marking != nullptr && _marking->marking()[element->offset()] == 0) d &= ~AIM_DEC; // Its 0 already, so don't aim to decrease (at first)
             _flags[element->offset()] |= d;
         }
         void _accept(const PQL::PlusExpr* element) override {
@@ -118,6 +118,7 @@ namespace PetriEngine {
     private:
         uint8_t *_flags;
         uint8_t direction = 0;
+        const Marking *_marking;
     };
 
     void Extrapolator::init(const PetriNet *net, const Condition *query) {
@@ -382,7 +383,7 @@ namespace PetriEngine {
     void Extrapolator::findDynamicVisiblePlaces(const Marking *marking, Condition *query) {
 
         PQL::evaluateAndSet(query, PQL::EvaluationContext(marking->marking(), _net), false);
-        PlaceReachabilityDirectionVisitor pv(_pflags.data());
+        PlaceReachabilityDirectionVisitor pv(_pflags.data(), marking);
         PQL::Visitor::visit(&pv, query);
 
         std::queue<uint32_t> queue;
@@ -534,7 +535,7 @@ namespace PetriEngine {
             return _cache.at(query);
         }
 
-        PlaceReachabilityDirectionVisitor puv(_pflags.data());
+        PlaceReachabilityDirectionVisitor puv(_pflags.data(), nullptr);
         PQL::Visitor::visit(&puv, query);
 
         std::vector<bool> vis_inc(_net->_nplaces); // Places where token increment is visible to query
